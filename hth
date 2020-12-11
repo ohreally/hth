@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+# This script makes a HEAD request for the given URL.
+# If the result has a status 301 or 302,
+# a new HEAD request is made for the new URL.
+# Etc.
+
+# For more info, see
+# https://www.ohreally.nl/2020/12/10/head-requests/
+
+################################################################################
+
+# Copyright (c) 2020 Rob La Lau <rob@ohreally.nl>
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+################################################################################
+
+# Dependencies.
+# `ncat' is part of Nmap.
+AWK=`which awk`   || exit 1
+NCAT=`which ncat` || exit 1
+SED=`which sed`   || exit 1
+
+# Usage message.
+usage() {
+	echo "Usage: $0 <URL>"
+	echo
+	echo "Only http and https URLs are supported."
+	exit 1
+}
+
+# First (and only) parameter is the URL.
+url=$1
+[ -z "${url}" ] && usage
+
+# URL parts.
+proto=${url%%://*}
+uri=${url##*://}
+host=${uri%%/*}
+path=${uri##*/}
+if [ "${host}" = "${path}" ]; then
+	path="/"
+else
+	path="/${path}"
+fi
+
+# SSL/TLS, or not?
+case ${proto} in
+	http)
+		param=""
+		port=80
+		;;
+	https)
+		param="--ssl"
+		port=443
+		;;
+	*)
+		usage
+		;;
+esac
+
+# Make request and process result.
+while read line; do
+	echo ${line}
+	case ${line} in
+		HTTP/*)
+			status=$(echo ${line} | "${AWK}" '{print $2}')
+			;;
+		Location:*)
+			# Line ends in CRLF.
+			location=$(echo ${line} | "${SED}" -E 's/^[a-z:]+ (.*)/\1/i;s/\r$//')
+			;;
+		*)
+			# Ignore.
+			;;
+	esac
+done < <(printf "HEAD ${path} HTTP/1.1\r\nHost: ${host}\r\n\r\n" | "${NCAT}" ${param} ${host} ${port})
+
+# Rinse repeat.
+[ ${status} -eq 301 -o ${status} -eq 302 ] && $0 ${location}
